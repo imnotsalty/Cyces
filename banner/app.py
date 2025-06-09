@@ -3,6 +3,7 @@ import requests
 import google.generativeai as genai
 import time
 import json
+import base64 # Import the base64 library
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -13,21 +14,19 @@ st.set_page_config(
 
 # --- API Key and Model Configuration ---
 try:
-    # Load API keys from secrets
     BANNERBEAR_API_KEY = st.secrets["BANNERBEAR_API_KEY"]
     GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
+    FREEIMAGE_API_KEY = st.secrets["FREEIMAGE_API_KEY"] 
     genai.configure(api_key=GOOGLE_API_KEY)
     GEMINI_MODEL = genai.GenerativeModel('gemini-1.5-flash')
 except (KeyError, FileNotFoundError):
-    st.error("🚨 Error: API keys not found. Please add BANNERBEAR_API_KEY and GOOGLE_API_KEY to your .streamlit/secrets.toml file.")
+    st.error("🚨 Error: API keys not found. Please check your .streamlit/secrets.toml file for BANNERBEAR_API_KEY, GOOGLE_API_KEY, and FREEIMAGE_API_KEY.")
     st.stop()
 
 
 # --- Bannerbear API Helper Functions ---
-
-@st.cache_data(ttl=3600) # Cache for 1 hour
+@st.cache_data(ttl=3600)
 def fetch_all_bannerbear_templates():
-    """Fetches all templates from the user's Bannerbear project."""
     st.info("Fetching templates from your Bannerbear project...")
     url = "https://api.bannerbear.com/v2/templates"
     headers = {"Authorization": f"Bearer {BANNERBEAR_API_KEY}"}
@@ -40,7 +39,6 @@ def fetch_all_bannerbear_templates():
         return None
 
 def fetch_bannerbear_template_details(template_id):
-    """Fetches a single template's details from the Bannerbear API."""
     url = f"https://api.bannerbear.com/v2/templates/{template_id}"
     headers = {"Authorization": f"Bearer {BANNERBEAR_API_KEY}"}
     try:
@@ -52,7 +50,6 @@ def fetch_bannerbear_template_details(template_id):
         return None
 
 def generate_bannerbear_image(template_id, modifications):
-    """Starts the image generation process on Bannerbear."""
     url = "https://api.bannerbear.com/v2/images"
     headers = {"Authorization": f"Bearer {BANNERBEAR_API_KEY}"}
     payload = {"template": template_id, "modifications": modifications}
@@ -65,12 +62,11 @@ def generate_bannerbear_image(template_id, modifications):
         return None
 
 def poll_for_image_completion(image_uid):
-    """Polls Bannerbear until the image is generated."""
     url = f"https://api.bannerbear.com/v2/images/{image_uid}"
     headers = {"Authorization": f"Bearer {BANNERBEAR_API_KEY}"}
     
     with st.spinner("⏳ Your banner is being crafted by digital artisans..."):
-        for _ in range(20):  # Poll for a maximum of 20 times (e.g., 40 seconds)
+        for _ in range(20):
             try:
                 response = requests.get(url, headers=headers)
                 response.raise_for_status()
@@ -80,21 +76,20 @@ def poll_for_image_completion(image_uid):
                 elif data["status"] == "failed":
                     st.error("Image generation failed on Bannerbear's side.")
                     return None
-                time.sleep(2) # Wait 2 seconds before polling again
+                time.sleep(2)
             except requests.exceptions.RequestException as e:
                 st.error(f"Polling failed: {e}")
                 return None
-        st.warning("Image generation is taking longer than expected. Please check your Bannerbear account.")
+        st.warning("Image generation is taking longer than expected.")
         return None
 
 # --- Gemini AI Helper Function ---
-
 @st.cache_data(ttl=3600)
 def analyze_template_with_gemini(_template_data_str):
-    """Uses Gemini to analyze the template and identify editable fields."""
     template_data = json.loads(_template_data_str)
     layers_data = template_data.get("available_modifications", [])
     
+    # --- THIS IS THE FULL, CORRECTED PROMPT ---
     prompt = f"""
     You are an expert UI generator. Your task is to analyze the JSON data of a Bannerbear template's layers and identify the editable text and image fields.
 
@@ -119,63 +114,45 @@ def analyze_template_with_gemini(_template_data_str):
             return None
 
 # --- Main Streamlit App ---
-
 st.title("🤖 AI-Powered Banner Generator")
 st.markdown("Choose a template from your Bannerbear project, and Gemini AI will create a form to customize it.")
 
-# Initialize session state
-if 'analysis_result' not in st.session_state:
-    st.session_state.analysis_result = None
-if 'template_data' not in st.session_state:
-    st.session_state.template_data = None
-if 'selected_template_id' not in st.session_state:
-    st.session_state.selected_template_id = None
+for key in ['analysis_result', 'template_data', 'selected_template_id']:
+    if key not in st.session_state:
+        st.session_state[key] = None
 
-
-# --- Sidebar for Configuration ---
 with st.sidebar:
     st.header("1. Select a Template")
-    
     all_templates = fetch_all_bannerbear_templates()
-
     if all_templates:
-        # Create a mapping from template name to its unique ID (uid)
         template_options = {t['name']: t['uid'] for t in all_templates}
-        
         selected_name = st.selectbox(
             label="Choose from your Bannerbear templates:",
             options=list(template_options.keys()),
             index=None,
             placeholder="Select a template..."
         )
-
         if selected_name:
             selected_id = template_options[selected_name]
-            # Check if selection has changed to avoid re-running analysis
             if selected_id != st.session_state.get('selected_template_id'):
                 st.session_state.selected_template_id = selected_id
                 st.session_state.template_data = fetch_bannerbear_template_details(selected_id)
                 if st.session_state.template_data:
-                    # Pass a string representation to the cached function
                     st.session_state.analysis_result = analyze_template_with_gemini(
                         json.dumps(st.session_state.template_data)
                     )
     else:
         st.warning("Could not find any templates. Please create one in your Bannerbear project.")
 
-
-# --- Main Content Area ---
 if st.session_state.get('analysis_result'):
     col1, col2 = st.columns([1, 1.5])
-
     with col1:
         st.header("2. Preview")
-        st.markdown("This is the base template you'll be modifying.")
         if st.session_state.template_data:
             st.image(
                 st.session_state.template_data["preview_url"],
                 caption="Template Preview",
-                use_container_width=True # <-- CORRECTED
+                use_container_width=True
             )
 
     with col2:
@@ -184,7 +161,6 @@ if st.session_state.get('analysis_result'):
         modifications = []
 
         with st.form("customization_form"):
-            # Dynamically create input fields based on Gemini's analysis
             if analysis.get("text_fields"):
                 st.subheader("Text Content")
                 for field in analysis["text_fields"]:
@@ -199,15 +175,30 @@ if st.session_state.get('analysis_result'):
                         label=field["label"], type=["png", "jpg", "jpeg", "webp"], key=f"image_{field['name']}"
                     )
                     if uploaded_file:
-                        with st.spinner(f"Uploading {field['label']}..."):
+                        with st.spinner(f"Uploading {field['label']} securely..."):
                             try:
-                                files = {'file': (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)}
-                                upload_response = requests.post('https://tmpfiles.org/api/v1/upload', files=files)
-                                upload_response.raise_for_status()
-                                direct_image_url = upload_response.json()['data']['url'].replace('/v1/upload', '/dl')
+                                url = "https://freeimage.host/api/1/upload"
+                                image_bytes = uploaded_file.getvalue()
+                                b64_image = base64.b64encode(image_bytes).decode('utf-8')
+                                payload = {
+                                    "key": FREEIMAGE_API_KEY,
+                                    "source": b64_image,
+                                    "format": "json"
+                                }
+                                response = requests.post(url, data=payload)
+                                response.raise_for_status()
+                                result = response.json()
+                                direct_image_url = result['image']['url']
+
                                 modifications.append({"name": field["name"], "image_url": direct_image_url})
+                                st.success(f"✅ {uploaded_file.name} is ready!")
+                            
                             except requests.exceptions.RequestException as e:
                                 st.error(f"Image upload failed: {e}")
+                                if e.response:
+                                    st.json(e.response.json())
+                            except Exception as e:
+                                st.error(f"An unexpected error occurred during upload: {e}")
 
             submitted = st.form_submit_button("✨ Generate Image", use_container_width=True, type="primary")
 
@@ -222,11 +213,7 @@ if st.session_state.get('analysis_result'):
                     final_image_url = poll_for_image_completion(generation_response["uid"])
                     if final_image_url:
                         st.header("🎉 Your Banner is Ready!")
-                        st.image(
-                            final_image_url, 
-                            caption="Generated Banner", 
-                            use_container_width=True # <-- CORRECTED
-                        )
+                        st.image(final_image_url, caption="Generated Banner", use_container_width=True)
                         st.success("Image generated successfully!")
                         st.markdown(f"**Image URL:** `{final_image_url}`")
 else:
